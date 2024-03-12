@@ -1,4 +1,4 @@
-#!pip install -U sentence-transformers
+!pip install -U sentence-transformers
 
 ##Requirement
 import torch
@@ -9,14 +9,16 @@ import functools
 import pickle
 import torch.nn as nn
 import json
-import evaluate
+# import evaluate
 import warnings
 import torch.nn.functional as F
+from tqdm import tqdm
 from PIL import Image
 from torchvision import transforms
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification, AutoConfig 
 from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers.util import cos_sim
 from sentence_transformers import SentenceTransformer,util
 from collections import defaultdict, Counter
 from torch.utils.data import Dataset, DataLoader, SequentialSampler
@@ -298,7 +300,7 @@ class Prepare_data_pred(Dataset):
 sb_model_name = "sentence-transformers/all-mpnet-base-v2"
 tokenizer = AutoTokenizer.from_pretrained(sb_model_name)
 sb_model = AutoModelForSequenceClassification.from_pretrained(sb_model_name)
-saved_state_dict = torch.load('BEST MODEL PATH', map_location=torch.device('cpu'))
+saved_state_dict = torch.load('/kaggle/input/fork-of-draft-baseline/best_model.pt', map_location=torch.device('cpu'))
 
 num_classes_saved = saved_state_dict['classifier.out_proj.weight'].shape[0]
 num_classes_current = sb_model.config.num_labels
@@ -310,13 +312,6 @@ if num_classes_saved != num_classes_current:
 sb_model.load_state_dict(saved_state_dict, strict=False)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sb_model.to(device)
-
-###load model mli for adding meaning into context
-nli_model_name = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
-tokenizer = AutoTokenizer.from_pretrained(nli_model_name)
-model_nli = AutoModelForSequenceClassification.from_pretrained(nli_model_name)
-model_nli.to(device)
-model_nli.eval()
 
 ###Load data
 batch_size = 64
@@ -336,38 +331,55 @@ for batch in test_dataloader:
         outputs = sb_model(batch['input_ids'].to(device), attention_mask=batch['attention_mask'].to(device))
     predicted_labels.extend(outputs.logits.argmax(dim=-1).cpu().tolist())
 
+df = pd.DataFrame({
+    'img_local_path': [item['img_local_path'] for item in test_data],
+    'caption1':[item['caption1'] for item in test_data],
+    'caption2':[item['caption2'] for item in test_data],
+    'text': [item['text'] for item in test_data],
+    'label': [item['label'] for item in test_data],
+    'pred_y': predicted_labels
+})
+
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-# accuracy = accuracy_score(true_labels, predicted_labels)
-# print("Accuracy:", accuracy)
-
-
 
 # SBERT + NLI + HEURISTIC 
 ### Load data for heuristic step
 df = pd.DataFrame({
-    'img_local_path': [item['img_local_path'] for item in eval_dataset],
-    'caption1':[item['caption1'] for item in eval_dataset],
-    'caption2':[item['caption2'] for item in eval_dataset],
-    'text': [item['text'] for item in eval_dataset],
-    'label': [item['label'] for item in eval_dataset],
+    'img_local_path': [item['img_local_path'] for item in test_data],
+    'caption1':[item['caption1'] for item in test_data],
+    'caption2':[item['caption2'] for item in test_data],
+    'text': [item['text'] for item in test_data],
+    'label': [item['label'] for item in test_data],
     'pred_y': predicted_labels
 })
+
+
 df1 = df[df['pred_y'] == 0.0].copy()
 dataset = HeuristicDataLoader(df1)
 finall_dataset = HeuristicDataLoader(df)
 
 ##load data and calculator cosine similarity from sbert 
-finall_df_loader = DataLoader(finall_dataset, batch_size=batch_size, collate_fn=finall_collate_fn)
+
+explainable_model = ExplainableModel(sb_model_name)
+explainable_model = explainable_model.to('cuda')
+explainable_model.eval()
+
+finall_df_loader = DataLoader(finall_dataset, batch_size=32, collate_fn=finall_collate_fn)
 embeddings_caption1, embeddings_caption2, labels = get_embeddings(finall_df_loader)
 cosine_similarities = cosine_similarity(embeddings_caption1, embeddings_caption2)
 df['cosine_similarity'] = cosine_similarities.diagonal()
 
-##load data and calculator contradition score from NLI
+###load model mli for adding meaning into context
+nli_model_name = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+tokenizer = AutoTokenizer.from_pretrained(nli_model_name)
+model_nli = AutoModelForSequenceClassification.from_pretrained(nli_model_name)
+model_nli.to(device)
+model_nli.eval()
 
+##load data and calculator contradition score from NLI
 data_nli = DataLoader(dataset, batch_size=batch_size, collate_fn=lambda batch: collate_fn_combined(batch, model=model_nli, tokenizer=tokenizer, device=device))
 dataframes = []
-for i, batch in enumerate(data_loader):
+for i, batch in enumerate(data_nli):
     df1 = pd.DataFrame(batch)
     dataframes.append(df1)
 
