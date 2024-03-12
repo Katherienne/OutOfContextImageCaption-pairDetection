@@ -406,12 +406,11 @@ correct_predictions = (actual_labels == predicted_labels).sum()
 total_predictions = len(df)
 
 accuracy = (correct_predictions / total_predictions)
-precision = precision_score(correct_predictions, total_predictions)
-recall = recall_score(correct_predictions, total_predictions)
-f1 = f1_score(correct_predictions, total_predictions)
+recall = recall_score(actual_labels, predicted_labels)
+f1 = f1_score(actual_labels, predicted_labels)
+
 
 # Print  metrics
 print(f"Accuracy: {accuracy:.2f}%")
-print(f"Precision: {precision:.2f}%")
 print(f"Recall: {recall:.2f}%")
 print(f"F1 Score: {f1:.2f}%")
