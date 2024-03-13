@@ -1,4 +1,5 @@
 !pip install -U sentence-transformers
+!pip install gdown
 
 ##Requirement
 import torch
@@ -9,6 +10,7 @@ import functools
 import pickle
 import torch.nn as nn
 import json
+import gdown
 # import evaluate
 import warnings
 import torch.nn.functional as F
@@ -25,6 +27,11 @@ from torch.utils.data import Dataset, DataLoader, SequentialSampler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from torch.optim import AdamW
 from transformers import get_scheduler
+
+### Path load dataset
+train_path = "/kaggle/input/data-unique-img/new_train.csv"
+img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
+test_path = "/kaggle/input/test-new/test_data.json"
 
 #Load data
 class OutContextData(Dataset):
@@ -297,10 +304,17 @@ class Prepare_data_pred(Dataset):
 # SBERT CLASSIFICATION
 ##Load data & Model for classification
 ###load model sbert for classification & cosine similarity calculator 
+batch_size = 64
 sb_model_name = "sentence-transformers/all-mpnet-base-v2"
 tokenizer = AutoTokenizer.from_pretrained(sb_model_name)
 sb_model = AutoModelForSequenceClassification.from_pretrained(sb_model_name)
-saved_state_dict = torch.load('/kaggle/input/fork-of-draft-baseline/best_model.pt', map_location=torch.device('cpu'))
+
+
+url = 'https://drive.google.com/uc?id=1lAn4jHtBBx-Y4sL92tW4YskbUNT4KgU9'
+output = 'model.pth'
+gdown.download(url, output, quiet=False)
+saved_state_dict = torch.load(output, map_location=torch.device('cpu'))
+
 
 num_classes_saved = saved_state_dict['classifier.out_proj.weight'].shape[0]
 num_classes_current = sb_model.config.num_labels
@@ -313,12 +327,7 @@ sb_model.load_state_dict(saved_state_dict, strict=False)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sb_model.to(device)
 
-###Load data
-batch_size = 64
 
-train_path = "/kaggle/input/data-unique-img/new_train.csv"
-img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
-test_path = "/kaggle/input/test-new/test_data.json"
 
 train_dataset = OutContextData(train_path, img_path)
 test_data = LoadTest(test_path)
@@ -397,7 +406,7 @@ if 'predict' not in df.columns:
     df['predict'] = df_updated['predict']
 
 df['new_label'] = df['pred_y']    
-condition1 = (df['cosine_similarity'] <= 0.47) & (df['pred_y'] == 0) & (df['predict'] == 1)
+condition1 = (df['cosine_similarity'] < 0.47) & (df['pred_y'] == 0) & (df['predict'] == 1)
 df.loc[condition1, 'new_label'] = 1
 
 actual_labels = df['label'].values
@@ -411,6 +420,6 @@ f1 = f1_score(actual_labels, predicted_labels)
 
 
 # Print  metrics
-print(f"Accuracy: {accuracy:.2f}%")
-print(f"Recall: {recall:.2f}%")
-print(f"F1 Score: {f1:.2f}%")
+print(f"Accuracy: {accuracy:.4f}%")
+print(f"Recall: {recall:.4f}%")
+print(f"F1 Score: {f1:.4f}%")
