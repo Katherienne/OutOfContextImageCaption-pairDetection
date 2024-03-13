@@ -31,7 +31,7 @@ from transformers import get_scheduler
 ### Path load dataset
 train_path = "/kaggle/input/data-unique-img/new_train.csv"
 img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
-test_path = "/kaggle/input/test-new/test_data.json"
+test_path = "/kaggle/input/cosmos/COSMOSOokpik/Testdata/test_data.json"
 
 #Load data
 class OutContextData(Dataset):
@@ -416,10 +416,12 @@ total_predictions = len(df)
 
 accuracy = (correct_predictions / total_predictions)
 recall = recall_score(actual_labels, predicted_labels)
+precision = precision_score(actual_labels, predicted_labels)
 f1 = f1_score(actual_labels, predicted_labels)
 
 
 # Print  metrics
 print(f"Accuracy: {accuracy:.4f}%")
 print(f"Recall: {recall:.4f}%")
+print(f"Precision: {recall:.4f}%")
 print(f"F1 Score: {f1:.4f}%")
