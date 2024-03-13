@@ -275,8 +275,6 @@ def collate_fn_combined(batch, model=None, tokenizer=None, device=None):
 
     for idx, item in enumerate(batch):
         item['nli_score_is_true'] = nli_scores_true[idx]
-        item['simscore'] = cos_sim(embeddings_caption1[idx], embeddings_caption2[idx]).item()
-
     return batch
 
 class Prepare_data_pred(Dataset):
