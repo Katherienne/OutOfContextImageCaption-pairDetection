@@ -255,10 +255,6 @@ def collate_fn_combined(batch, model=None, tokenizer=None, device=None):
 
     premise_true = [f'{item["caption1"]}{nli_true_postfix}' for item in batch]
     hypothesis = [item['caption2'] for item in batch]
-
-    embeddings_caption1 = get_embeddings_nli(premise_true, model, tokenizer, device)
-    embeddings_caption2 = get_embeddings_nli(premise_true, model, tokenizer, device)
-
     if model is not None and tokenizer is not None and device is not None:
         inputs_true = tokenizer(premise_true, hypothesis, truncation=True, padding=True, return_tensors='pt')
         inputs_true = {key: tensor.to(device) for key, tensor in inputs_true.items()}
