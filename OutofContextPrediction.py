@@ -29,40 +29,10 @@ from torch.optim import AdamW
 from transformers import get_scheduler
 
 ### Path load dataset
-train_path = "/kaggle/input/data-unique-img/new_train.csv"
 img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
 test_path = "/kaggle/input/cosmos/COSMOSOokpik/Testdata/test_data.json"
 
 #Load data
-class OutContextData(Dataset):
-    def __init__(self, data_path: str, image_input_path: str):
-        super().__init__()
-        self.data_path = data_path
-        self.image_input_path = image_input_path
-        self.__load_file()
-
-    def __load_file(self):
-        df = pd.read_csv(self.data_path)
-        self.__raw_data = df.to_dict('records')
-        self.__raw_len = len(self.__raw_data)
-
-    def __len__(self) -> int:
-        return self.__raw_len
-
-    def __getitem__(self, idx):
-        # Access data based on index
-        d_point = self.__raw_data[idx]
-        
-        caption1 = d_point['caption1']
-        caption2 = d_point['caption2']
-        
-        label = int(d_point['label'])
-        
-        return {
-            "caption1": caption1,
-            "caption2": caption2,
-            "label": label
-        }
     
 class LoadTest(Dataset):
     def __init__(self, file_path):
@@ -94,7 +64,23 @@ class LoadTest(Dataset):
             'text': concatenated_caption,
             'label': label,
         }
+    
+class HeuristicDataLoader(Dataset):
+    def __init__(self, df):
+        self.data = df.to_dict('records')
 
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        return {
+            'img_local_path': item.get('img_local_path'),
+            'caption1': item.get('caption1'),
+            'caption2': item.get('caption2'),
+            'label': item.get('label'),
+            'sbertlabel':item.get('pred_y')
+        }
 
 def collate_fn(batch):
     inputs = tokenizer([item['text'] for item in batch], padding=True, truncation=True, return_tensors='pt')
@@ -206,26 +192,6 @@ def get_embeddings(data_loader):
     return all_embeddings_caption1, all_embeddings_caption2, all_labels
 
 
-
-class HeuristicDataLoader(Dataset):
-    def __init__(self, df):
-        self.data = df.to_dict('records')
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        return {
-            'img_local_path': item.get('img_local_path'),
-            'caption1': item.get('caption1'),
-            'caption2': item.get('caption2'),
-            'label': item.get('label'),
-            'sbertlabel':item.get('pred_y')
-        }
-
-
-
 def finall_collate_fn(batch):
     collated_batch = {}
     for key in batch[0].keys():
@@ -321,9 +287,6 @@ sb_model.load_state_dict(saved_state_dict, strict=False)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sb_model.to(device)
 
-
-
-train_dataset = OutContextData(train_path, img_path)
 test_data = LoadTest(test_path)
 test_dataloader = DataLoader(test_data, batch_size=batch_size, collate_fn=collate_fn)
 
@@ -399,12 +362,12 @@ df_updated = pd.concat([df_original, df_new_data], axis=1)
 if 'predict' not in df.columns:
     df['predict'] = df_updated['predict']
 
-df['new_label'] = df['pred_y']    
+df['finall_label'] = df['pred_y']    
 condition1 = (df['cosine_similarity'] < 0.47) & (df['pred_y'] == 0) & (df['predict'] == 1)
-df.loc[condition1, 'new_label'] = 1
+df.loc[condition1, 'finall_label'] = 1
 
 actual_labels = df['label'].values
-predicted_labels = df['new_label'].values
+predicted_labels = df['finall_label'].values
 correct_predictions = (actual_labels == predicted_labels).sum()
 total_predictions = len(df)
 
