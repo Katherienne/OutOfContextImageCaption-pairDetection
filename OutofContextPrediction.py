@@ -244,7 +244,7 @@ def collate_fn_combined(batch, model=None, tokenizer=None, device=None):
 class Prepare_data_pred(Dataset):
     def __init__(self, df):
         self.data = df.to_dict('records')
-        self.nli = 0.6 #0.75
+        self.nli = t_nli 
 
     def __len__(self):
         return len(self.data)
@@ -268,7 +268,10 @@ def count_parameters(model):
 # SBERT CLASSIFICATION
 ##Load data & Model for classification
 ###load model sbert for classification & cosine similarity calculator 
+###set threshold
 batch_size = 64
+t_nli = 0.6
+t_sbert = 0.47
 sb_model_name = "sentence-transformers/all-mpnet-base-v2"
 tokenizer = AutoTokenizer.from_pretrained(sb_model_name)
 sb_model = AutoModelForSequenceClassification.from_pretrained(sb_model_name)
@@ -364,7 +367,7 @@ if 'predict' not in df.columns:
     df['predict'] = df_updated['predict']
 
 df['finall_label'] = df['pred_y']    
-condition1 = (df['cosine_similarity'] < 0.47) & (df['pred_y'] == 0) & (df['predict'] == 1)
+condition1 = (df['cosine_similarity'] < t_sbert) & (df['pred_y'] == 0) & (df['predict'] == 1)
 df.loc[condition1, 'finall_label'] = 1
 
 actual_labels = df['label'].values
