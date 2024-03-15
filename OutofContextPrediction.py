@@ -1,5 +1,6 @@
 !pip install -U sentence-transformers
 !pip install gdown
+!pip install thop
 
 ##Requirement
 import torch
@@ -12,6 +13,7 @@ import torch.nn as nn
 import json
 import gdown
 # import evaluate
+from thop import profile
 import warnings
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -30,7 +32,7 @@ from transformers import get_scheduler
 
 ### Change path load dataset
 img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
-test_path = "/kaggle/input/cosmos/COSMOSOokpik/Testdata/test_data.json"
+test_path = "/kaggle/input/cosmos/cosmos_anns_acm/cosmos_anns_acm/public_test_acm.json"
 
 #Load data
     
@@ -260,6 +262,8 @@ class Prepare_data_pred(Dataset):
 
         return {**x, **prediction_info}
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 # SBERT CLASSIFICATION
 ##Load data & Model for classification
@@ -297,6 +301,13 @@ for batch in test_dataloader:
         outputs = sb_model(batch['input_ids'].to(device), attention_mask=batch['attention_mask'].to(device))
     predicted_labels.extend(outputs.logits.argmax(dim=-1).cpu().tolist())
 
+input_sample = next(iter(test_dataloader))
+input_ids = input_sample['input_ids'].to(device)
+attention_mask = input_sample['attention_mask'].to(device)
+macs, params = profile(sb_model, (input_ids, attention_mask))
+
+print(f"Gflops: {macs:.2f}")
+
 df = pd.DataFrame({
     'img_local_path': [item['img_local_path'] for item in test_data],
     'caption1':[item['caption1'] for item in test_data],
@@ -310,16 +321,6 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 # SBERT + NLI + HEURISTIC 
 ### Load data for heuristic step
-df = pd.DataFrame({
-    'img_local_path': [item['img_local_path'] for item in test_data],
-    'caption1':[item['caption1'] for item in test_data],
-    'caption2':[item['caption2'] for item in test_data],
-    'text': [item['text'] for item in test_data],
-    'label': [item['label'] for item in test_data],
-    'pred_y': predicted_labels
-})
-
-
 df1 = df[df['pred_y'] == 0.0].copy()
 dataset = HeuristicDataLoader(df1)
 finall_dataset = HeuristicDataLoader(df)
@@ -382,3 +383,5 @@ print(f"Accuracy: {accuracy:.4f}%")
 print(f"Recall: {recall:.4f}%")
 print(f"Precision: {recall:.4f}%")
 print(f"F1 Score: {f1:.4f}%")
+print(f"Number of sbert Trainable Parameters: {count_parameters(sb_model):,}")
+print(f"Number of nli Trainable Parameters: {count_parameters(model_nli):,}")
