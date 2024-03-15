@@ -28,7 +28,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 from torch.optim import AdamW
 from transformers import get_scheduler
 
-### Path load dataset
+### Change path load dataset
 img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
 test_path = "/kaggle/input/cosmos/COSMOSOokpik/Testdata/test_data.json"
 
