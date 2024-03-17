@@ -32,8 +32,7 @@ from torch.optim import AdamW
 from transformers import get_scheduler
 
 ### Path load dataset
-img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
-test_path = "/kaggle/input/cosmos/cosmos_anns_acm/cosmos_anns_acm/public_test_acm.json"
+test_path = "public_test_acm.json"
 
 #Load data
     
