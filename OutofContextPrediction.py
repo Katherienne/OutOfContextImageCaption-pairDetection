@@ -12,6 +12,7 @@ import pickle
 import torch.nn as nn
 import json
 import gdown
+import os
 # import evaluate
 from thop import profile
 import warnings
@@ -30,7 +31,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 from torch.optim import AdamW
 from transformers import get_scheduler
 
-### Change path load dataset
+### Path load dataset
 img_path = "/kaggle/input/cosmos/images_test_acm/images_test_acm/test"
 test_path = "/kaggle/input/cosmos/cosmos_anns_acm/cosmos_anns_acm/public_test_acm.json"
 
@@ -194,7 +195,7 @@ def get_embeddings(data_loader):
     return all_embeddings_caption1, all_embeddings_caption2, all_labels
 
 
-def finall_collate_fn(batch):
+def cosine_collate_fn(batch):
     collated_batch = {}
     for key in batch[0].keys():
         if isinstance(batch[0][key], torch.Tensor):
@@ -214,7 +215,6 @@ def get_embeddings_nli(texts, model, tokenizer, device):
         embeddings = torch.nn.functional.softmax(logits, dim=1)
 
     return embeddings.cpu().numpy()
-
 
 def collate_fn_combined(batch, model=None, tokenizer=None, device=None):
     nli_true_postfix = " is true"
@@ -239,12 +239,14 @@ def collate_fn_combined(batch, model=None, tokenizer=None, device=None):
 
     for idx, item in enumerate(batch):
         item['nli_score_is_true'] = nli_scores_true[idx]
+        item['input_ids'] = inputs_true['input_ids'][idx]
+        item['attention_mask'] = inputs_true['attention_mask'][idx]
     return batch
 
 class Prepare_data_pred(Dataset):
     def __init__(self, df):
         self.data = df.to_dict('records')
-        self.nli = t_nli 
+        self.nli = 0.6 #0.75
 
     def __len__(self):
         return len(self.data)
@@ -264,14 +266,12 @@ class Prepare_data_pred(Dataset):
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+#=========================================
 
 # SBERT CLASSIFICATION
 ##Load data & Model for classification
 ###load model sbert for classification & cosine similarity calculator 
-###set threshold
 batch_size = 64
-t_nli = 0.6
-t_sbert = 0.47
 sb_model_name = "sentence-transformers/all-mpnet-base-v2"
 tokenizer = AutoTokenizer.from_pretrained(sb_model_name)
 sb_model = AutoModelForSequenceClassification.from_pretrained(sb_model_name)
@@ -307,9 +307,7 @@ for batch in test_dataloader:
 input_sample = next(iter(test_dataloader))
 input_ids = input_sample['input_ids'].to(device)
 attention_mask = input_sample['attention_mask'].to(device)
-macs, params = profile(sb_model, (input_ids, attention_mask))
-
-print(f"Gflops: {macs:.2f}")
+macs_classify, params_classify = profile(sb_model, (input_ids, attention_mask))
 
 df = pd.DataFrame({
     'img_local_path': [item['img_local_path'] for item in test_data],
@@ -334,7 +332,29 @@ explainable_model = ExplainableModel(sb_model_name)
 explainable_model = explainable_model.to('cuda')
 explainable_model.eval()
 
-finall_df_loader = DataLoader(finall_dataset, batch_size=32, collate_fn=finall_collate_fn)
+finall_df_loader = DataLoader(finall_dataset, batch_size=32, collate_fn=cosine_collate_fn)
+total_gflops = 0.0
+
+for batch in finall_df_loader:
+    inputs1_tensor_list = []
+    inputs2_tensor_list = []
+    labels_batch = batch['label']
+    valid_indices = [i for i, label in enumerate(labels_batch) if label is not None]
+    labels_batch = [label for label in labels_batch if label is not None]
+    labels_tensor = torch.tensor(labels_batch, dtype=torch.float32).to(device)
+
+    inputs1, inputs2 = get_ids(batch)
+    inputs1_tensor_list.append((inputs1['input_ids'].to(device), inputs1['attention_mask'].to(device)))
+    inputs2_tensor_list.append((inputs2['input_ids'].to(device), inputs2['attention_mask'].to(device)))
+
+    processed_batch = {
+        'ids1': inputs1_tensor_list,
+        'ids2': inputs2_tensor_list,
+        'labels': labels_tensor,
+    }
+    macs, params = profile(explainable_model, (processed_batch['ids1'][0], processed_batch['ids2'][0]))
+    total_gflops += macs
+
 embeddings_caption1, embeddings_caption2, labels = get_embeddings(finall_df_loader)
 cosine_similarities = cosine_similarity(embeddings_caption1, embeddings_caption2)
 df['cosine_similarity'] = cosine_similarities.diagonal()
@@ -346,14 +366,22 @@ model_nli = AutoModelForSequenceClassification.from_pretrained(nli_model_name)
 model_nli.to(device)
 model_nli.eval()
 
-##load data and calculator contradition score from NLI
+# Load data and calculate contradiction score from NLI
 data_nli = DataLoader(dataset, batch_size=batch_size, collate_fn=lambda batch: collate_fn_combined(batch, model=model_nli, tokenizer=tokenizer, device=device))
-dataframes = []
-for i, batch in enumerate(data_nli):
-    df1 = pd.DataFrame(batch)
-    dataframes.append(df1)
+merged_df = pd.concat([pd.DataFrame(batch) for batch in data_nli], ignore_index=True)
 
-merged_df = pd.concat(dataframes, ignore_index=True)
+# Calculate GFLOPS for NLI process
+total_macs_nli = 0
+for i, row in merged_df.iterrows():
+    input_ids_list = row['input_ids'].cpu().numpy().tolist()
+    attention_mask_list = row['attention_mask'].cpu().numpy().tolist()    
+    input_ids_tensor = torch.tensor(input_ids_list).to(device)
+    attention_mask_tensor = torch.tensor(attention_mask_list).to(device)
+    
+    with torch.no_grad():
+        macs_nli, _ = profile(model_nli, inputs=(input_ids_tensor.unsqueeze(0), attention_mask_tensor.unsqueeze(0)))
+        total_macs_nli += macs_nli
+
 
 ##Prepare data for prediction process
 
@@ -367,7 +395,7 @@ if 'predict' not in df.columns:
     df['predict'] = df_updated['predict']
 
 df['finall_label'] = df['pred_y']    
-condition1 = (df['cosine_similarity'] < t_sbert) & (df['pred_y'] == 0) & (df['predict'] == 1)
+condition1 = (df['cosine_similarity'] < 0.47) & (df['pred_y'] == 0) & (df['predict'] == 1)
 df.loc[condition1, 'finall_label'] = 1
 
 actual_labels = df['label'].values
@@ -386,5 +414,26 @@ print(f"Accuracy: {accuracy:.4f}%")
 print(f"Recall: {recall:.4f}%")
 print(f"Precision: {recall:.4f}%")
 print(f"F1 Score: {f1:.4f}%")
-print(f"Number of sbert Trainable Parameters: {count_parameters(sb_model):,}")
+
+print(f"\nNumber of sbert classification Trainable Parameters: {count_parameters(sb_model):,}")
+print(f"Number of sbert embedding Trainable Parameters: {count_parameters(explainable_model):,}")
 print(f"Number of nli Trainable Parameters: {count_parameters(model_nli):,}")
+print(f"Gflops SBERT classify process: {macs_classify:.2f}")
+print(f"Gflops SBERT cosine similarity : {total_gflops:.2f}")
+print(f"GFLOPS for NLI process: {total_macs_nli:.2f}")
+
+
+torch.save(sb_model.state_dict(), 'sb_model.pth')
+model_size_bytes = os.path.getsize('sb_model.pth')
+sb_classify_ms = model_size_bytes / (1024 * 1024)
+print(f"\nSBERT classify model size: {sb_classify_ms:.2f} MB")
+
+torch.save(explainable_model.state_dict(), 'cs_model.pth')
+model_size_bytes = os.path.getsize('cs_model.pth')
+sb_cosine_ms = model_size_bytes / (1024 * 1024)
+print(f"SBERT cosine model size: {sb_cosine_ms:.2f} MB")
+
+torch.save(model_nli.state_dict(), 'nli_model.pth')
+model_size_bytes = os.path.getsize('nli_model.pth')
+nli_ms = model_size_bytes / (1024 * 1024)
+print(f"NLI model size: {nli_ms:.2f} MB")
