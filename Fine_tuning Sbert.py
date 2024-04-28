@@ -125,7 +125,14 @@ def collate_fn(batch):
     return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
 
 
+class ContrastiveLossForClassification(nn.Module):
+    def __init__(self, margin=1.0):
+        super(ContrastiveLossForClassification, self).__init__()
+        self.margin = margin
 
+    def forward(self, logits, labels):
+        loss_contrastive = nn.CrossEntropyLoss()(logits, labels)
+        return loss_contrastive
 
 
 ###Load model
@@ -159,14 +166,16 @@ eval_dataloader = DataLoader(eval_data, batch_size=32, collate_fn=collate_fn)
 
 ## defined optimized
 
-optimizer = AdamW(model.parameters(), lr=5e-5)
-criterion = nn.CrossEntropyLoss()
-
 num_epochs = 20
 num_training_steps = num_epochs * len(train_dataloader)
+optimizer = AdamW(model.parameters(), lr=1e-5)
 lr_scheduler = get_scheduler(
-    name="linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=num_training_steps
+    name="linear",
+    optimizer=optimizer,
+    num_warmup_steps= 500, 
+    num_training_steps=num_training_steps
 )
+criterion = ContrastiveLossForClassification()
 
 ## Training
 
@@ -174,6 +183,9 @@ progress_bar = tqdm(range(num_training_steps))
 best_acc = 0.8
 best_model_path = "best_model.pt"
 
+
+for param in model.base_model.embeddings.parameters():
+    param.requires_grad = True
 
 for epoch in range(num_epochs):
     model.train()
@@ -183,19 +195,16 @@ for epoch in range(num_epochs):
         inputs = {key: val for key, val in batch.items() if key != 'labels'}
         labels = batch['labels']
         
-        
         outputs = model(**inputs)
         loss = criterion(outputs.logits, labels)
         total_loss += loss.item()
-        #         logits = dataset.forward(model, input_ids, attention_mask, labels)
-
         
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         lr_scheduler.step()
         progress_bar.update(1)
-
+        
     predictions_list = []
     labels_list = []
     eval_loss = 0.0
@@ -203,6 +212,7 @@ for epoch in range(num_epochs):
     model.eval()
     for batch in eval_dataloader:
         batch = {k: v.to(device) for k, v in batch.items()}
+#         with torch.no_grad():
         outputs = model(**batch)
 
         logits = outputs.logits
